@@ -1,0 +1,41 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.ivy.mcmtforge.mixin",
+  "compatibilityLevel": "JAVA_16",
+  "mixins": [
+    "ChainRestrictedNeighborUpdaterMixin",
+    "CheckedRandomMixin",
+    "ChunkHolderMixin",
+    "ChunkMixin",
+    "ChunkTicketManagerMixin",
+    "EntityIndexMixin",
+    "EntityListMixin",
+    "FastUtilsMixin",
+    "ItemEntityMixin",
+    "LevelPropagatorMixin",
+    "MinecraftServerMixin",
+    "NearestLivingEntitiesSensorMixin",
+    "PathNodeNavigatorMixin",
+    "PendingUpdateQueueMixin",
+    "SectionedEntityCacheMixin",
+    "SerializingRegionBasedStorageMixin",
+    "ServerChunkManagerMixin",
+    "ServerWorldMixin",
+    "SimulationDistanceLevelPropagatorMixin",
+    "SyncAllMixin",
+    "ThreadedAnvilChunkStorageMixin",
+    "TypeFilterableListMixin",
+    "UtilMixin",
+    "WorldMixin",
+    "WorldTickSchedulerMixin"
+  ],
+  "client": [
+  ],
+  "server": [
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "plugin": "net.ivy.mcmtforge.mixin.SynchronisePlugin"
+}
