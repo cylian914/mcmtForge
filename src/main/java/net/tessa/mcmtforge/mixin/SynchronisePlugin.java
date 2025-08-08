@@ -38,14 +38,12 @@ public class SynchronisePlugin implements IMixinConfigPlugin {
         mixin2MethodsMap.put("net.tessa.mcmtforge.mixin.PathNodeNavigatorMixin", mappingResolver.mapMethodName("net.minecraft.class_13", "method_52", "(Lnet/minecraft/class_1950;Lnet/minecraft/class_1308;Ljava/util/Set;FIF)Lnet/minecraft/class_11;"));
 //        mixin2MethodsMap.put("net.tessa.mcmtforge.mixin.ChunkStatusMixin", mappingResolver.mapMethodName("intermediary", "net.minecraft.class_2806", "method_20612", "(Lnet/minecraft/class_3218;Lnet/minecraft/class_3485;Lnet/minecraft/class_3227;Ljava/util/function/Function;Lnet/minecraft/class_2791;)Ljava/util/concurrent/CompletableFuture;"));
         mixin2MethodsMap.put("net.tessa.mcmtforge.mixin.NearestLivingEntitiesSensorMixin", mappingResolver.mapMethodName("net.minecraft.class_4148","method_19101", "(Lnet/minecraft/class_3218;Lnet/minecraft/class_1309;)V"));
- */      mixin2MethodsExcludeMap.put("net.tessa.mcmtforge.mixin.SyncAllMixin", mappingResolver.mapMethodName("net.minecraft.class_2806", "method_12165", "(Lnet/minecraft/class_2806;)Z"));
+ */
+        mixin2MethodsExcludeMap.put("net.tessa.mcmtforge.mixin.SyncAllMixin", mappingResolver.mapMethodName("net.minecraft.class_2806", "method_12165", "(Lnet/minecraft/class_2806;)Z"));
 
 
-        //syncAllSet.add("net.ivy.mcmtforge.mixin.FastUtilsMixin");
+        syncAllSet.add("net.ivy.mcmtforge.mixin.FastUtilsMixin");
         syncAllSet.add("net.tessa.mcmtforge.mixin.SyncAllMixin");
-        syncAllSet.add("net.tessa.mcmtforge.mixin.CheckedRandomMixin");   // For some reason the mapping does not cover next() so sync all for now
-
-        //net.ivy.mcmtforge.syncfu.SyncFuTransformer.onPreLaunch(this.getClass().getClassLoader());
     }
 
     @Override
@@ -85,8 +83,8 @@ public class SynchronisePlugin implements IMixinConfigPlugin {
                 }
         }
         else if (syncAllSet.contains(mixinClassName)) {
-//            int posFilter = Opcodes.ACC_PUBLIC;
             int negFilter = Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_NATIVE | Opcodes.ACC_ABSTRACT | Opcodes.ACC_BRIDGE;
+
             syncLogger.info("Setting synchronize bit for {} [{}]:", targetClassName, mixinClassName.substring(mixinClassName.lastIndexOf(".") + 1));
             for (MethodNode method : targetClass.methods) {
                 if ((method.access & negFilter) == 0 && !method.name.equals("<init>") && !excludedMethods.contains(method.name)) {

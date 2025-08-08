@@ -1,5 +1,6 @@
 package net.tessa.mcmtforge.mixin;
 
+import com.llamalad7.mixinextras.sugar.Local;
 import net.tessa.mcmtforge.ParallelProcessor;
 import net.minecraft.Util;
 import org.spongepowered.asm.mixin.Mixin;
@@ -14,10 +15,8 @@ import java.util.concurrent.ForkJoinWorkerThread;
 @Mixin(Util.class)
 public abstract class UtilMixin {
 
-
-    @Inject(remap = false, method = "m_201861_", at = @At(value = "INVOKE", target = "Ljava/util/concurrent/ForkJoinWorkerThread;setName(Ljava/lang/String;)V"), locals = LocalCapture.CAPTURE_FAILHARD)
-    //@Inject(remap = false, method = "m_201861_", at = @At(value = "INVOKE", target = "Ljava/util/concurrent/ForkJoinWorkerThread;setName(Ljava/lang/String;)V"), locals = LocalCapture.CAPTURE_FAILHARD)
-    private static void registerThread(String string, ForkJoinPool forkJoinPool, CallbackInfoReturnable<ForkJoinWorkerThread> cir, ForkJoinWorkerThread forkJoinWorkerThread) {
+    @Inject(remap = false, method = "m_201861_", at = @At(value = "INVOKE", target = "Ljava/util/concurrent/ForkJoinWorkerThread;setName(Ljava/lang/String;)V"))
+    private static void registerThread(String string, ForkJoinPool forkJoinPool, CallbackInfoReturnable<ForkJoinWorkerThread> cir, @Local(argsOnly = true) ForkJoinWorkerThread forkJoinWorkerThread) {
         ParallelProcessor.regThread(string, forkJoinWorkerThread);
     }
 }

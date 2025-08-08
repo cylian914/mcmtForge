@@ -46,8 +46,8 @@ public class GeneralConfig implements ConfigData {
     public boolean disableEntity = false;
 
     // TE
-    @Comment("Disable tile entity parallelisation")
-    public boolean disableTileEntity = false;
+    @Comment("Disable block entity parallelisation")
+    public boolean disableBlockEntity = false;
 
     @Comment("Use chunklocks for any unknown (i.e. modded) tile entities\n"
             + "Chunklocking means we prevent multiple tile entities a 1 chunk radius of each other being ticked to limit concurrency impacts")

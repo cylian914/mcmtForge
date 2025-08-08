@@ -25,6 +25,7 @@ public class ConfigCommand {
         LiteralArgumentBuilder<CommandSourceStack> mcmtconfig = literal("mcmt");
         mcmtconfig = mcmtconfig.then(registerConfig(literal("config")));
         mcmtconfig = mcmtconfig.then(DebugCommand.registerDebug(literal("debug")));
+        mcmtconfig = mcmtconfig.then(RegionCommand.registerRegion(literal("region")));
         mcmtconfig = StatsCommand.registerStatus(mcmtconfig);
         dispatcher.register(mcmtconfig);
     }
@@ -40,9 +41,9 @@ public class ConfigCommand {
                             cmdCtx.getSource().sendSuccess(() -> message, true);
                             return 1;
                         }).then(literal("te").executes(cmdCtx -> {
-                            config.disableTileEntity = !config.disableTileEntity;
+                            config.disableBlockEntity = !config.disableBlockEntity;
                             MutableComponent message = Component.literal("MCMT's tile entity threading is now "
-                                    + (config.disableTileEntity ? "disabled" : "enabled"));
+                                    + (config.disableBlockEntity ? "disabled" : "enabled"));
                             cmdCtx.getSource().sendSuccess(() -> message, true);
                             return 1;
                         })).then(literal("entity").executes(cmdCtx -> {
@@ -77,7 +78,7 @@ public class ConfigCommand {
                     if (!config.disabled) {
                         messageString.append(" World:" + (config.disableWorld ? "disabled" : "enabled"));
                         messageString.append(" Entity:" + (config.disableEntity ? "disabled" : "enabled"));
-                        messageString.append(" TE:" + (config.disableTileEntity ? "disabled"
+                        messageString.append(" TE:" + (config.disableBlockEntity ? "disabled"
                                 : "enabled" + (config.chunkLockModded ? "(ChunkLocking Modded)" : "")));
                         messageString.append(" Env:" + (config.disableEnvironment ? "disabled" : "enabled"));
                         messageString.append(" SCP:" + (config.disableChunkProvider ? "disabled" : "enabled"));
@@ -176,25 +177,6 @@ public class ConfigCommand {
                                             BlockEntityLists.teWhiteList.remove(te.getClass());
                                             config.teWhiteListString.remove(te.getClass().getName());
                                             message = Component.literal("Removed " + te.getClass().getName() + " from TE classlists");
-                                            cmdCtx.getSource().sendSuccess(() -> message, true);
-                                            return 1;
-                                        }
-                                        message = Component.literal("That block doesn't contain a tickable TE!");
-                                        cmdCtx.getSource().sendFailure(message);
-                                        return 0;
-                                    }
-                                    message = Component.literal("Only runable by player!");
-                                    cmdCtx.getSource().sendFailure(message);
-                                    return 0;
-                                })).then(literal("willtick").executes(cmdCtx -> {
-                                    MutableComponent message;
-                                    HitResult htr = cmdCtx.getSource().getPlayer().pick(20, 0.0F, false);
-                                    if (htr.getType() == HitResult.Type.BLOCK) {
-                                        BlockPos bp = ((BlockHitResult) htr).getBlockPos();
-                                        BlockEntity te = cmdCtx.getSource().getLevel().getBlockEntity(bp);
-                                        if (isTickableBe(te)) {
-                                            boolean willSerial = ParallelProcessor.filterTE((TickingBlockEntity) te);
-                                            message = Component.literal("That TE " + (!willSerial ? "will" : "will not") + " tick fully parallelised");
                                             cmdCtx.getSource().sendSuccess(() -> message, true);
                                             return 1;
                                         }

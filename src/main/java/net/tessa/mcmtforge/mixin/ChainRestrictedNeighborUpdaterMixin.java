@@ -1,7 +1,9 @@
 package net.tessa.mcmtforge.mixin;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
-import net.tessa.mcmtforge.MCMT;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
@@ -36,4 +38,9 @@ public abstract class ChainRestrictedNeighborUpdaterMixin implements NeighborUpd
     private void log(CallbackInfo ci) {
 //         MCMT.LOGGER.warn("stack size: {}", stack.size());
      }
+
+    @WrapMethod(method = "addAndRun")
+    private synchronized void syncEnqueue(BlockPos pPos, CollectingNeighborUpdater.NeighborUpdates pUpdates, Operation<Void> original) {
+        original.call(pPos, pUpdates);
+    }
 }

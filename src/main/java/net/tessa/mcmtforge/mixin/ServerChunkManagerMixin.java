@@ -1,5 +1,7 @@
 package net.tessa.mcmtforge.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.mojang.datafixers.util.Either;
 import net.tessa.mcmtforge.DebugHookTerminator;
 import net.tessa.mcmtforge.ParallelProcessor;
@@ -58,10 +60,16 @@ public abstract class ServerChunkManagerMixin extends ChunkSource {
             return;
         else instance.incrementCounter("getChunkCacheMiss");
     }
-    @Inject(method = "Lnet/minecraft/server/level/ServerChunkCache;getChunk(IILnet/minecraft/world/level/chunk/ChunkStatus;Z)Lnet/minecraft/world/level/chunk/ChunkAccess;", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerChunkCache$MainThreadExecutor;managedBlock(Ljava/util/function/BooleanSupplier;)V"), locals = LocalCapture.CAPTURE_FAILHARD)
+
+    @WrapMethod(method = "storeInCache")
+    private synchronized void syncPutInCache(long pos, ChunkAccess chunk, ChunkStatus status, Operation<Void> original) {
+        original.call(pos, chunk, status);
+    }
+
+    /*@Inject(method = "Lnet/minecraft/server/level/ServerChunkCache;getChunk(IILnet/minecraft/world/level/chunk/ChunkStatus;Z)Lnet/minecraft/world/level/chunk/ChunkAccess;", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerChunkCache$MainThreadExecutor;managedBlock(Ljava/util/function/BooleanSupplier;)V"), locals = LocalCapture.CAPTURE_FAILHARD)
     private void callCompletableFutureHook(int x, int z, ChunkStatus leastStatus, boolean create, CallbackInfoReturnable<ChunkAccess> cir, ProfilerFiller profiler, long chunkPos, CompletableFuture<Either<ChunkAccess, ChunkHolder.ChunkLoadingFailure>> i) {
         DebugHookTerminator.chunkLoadDrive(this.mainThreadProcessor, i::isDone, (ServerChunkCache) (Object) this, i, chunkPos);
 
-    }
+    }*/
 
 }

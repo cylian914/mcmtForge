@@ -33,12 +33,9 @@ public abstract class ChunkTicketManagerMixin {
     @Mutable
     LongSet ticketsToRelease;
 
-    @Shadow @Final @Mutable Long2ObjectOpenHashMap<SortedArraySet<Ticket<?>>> tickets;
-
     @Inject(method = "<init>", at = @At("TAIL"))
     private void changeType(Executor pDispatcher, Executor pMainThreadExecutor, CallbackInfo ci) {
         chunksToUpdateFutures = ConcurrentCollections.newHashSet();
         ticketsToRelease =  new ConcurrentLongLinkedOpenHashSet();
-        tickets = new Long2ObjectOpenConcurrentHashMap<>();
     }
 }

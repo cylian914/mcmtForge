@@ -55,7 +55,7 @@ public class DebugCommand {
                 cmdCtx.getSource().sendSuccess(() -> message, true);
                 return 1;
             }
-            CompoundTag nbt = te.getUpdateTag();
+            CompoundTag nbt = te.saveWithoutMetadata();
             String nbtStr = nbt.toString();
             MutableComponent message = Component.literal("Block at " + bp + " is " + bs.getBlock().getName() + " with TE NBT:");
             cmdCtx.getSource().sendSuccess(() -> message, true);

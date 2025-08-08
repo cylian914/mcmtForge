@@ -6,6 +6,7 @@ import me.shedaniel.autoconfig.serializer.Toml4jConfigSerializer;
 import net.tessa.mcmtforge.commands.ConfigCommand;
 import net.tessa.mcmtforge.commands.StatsCommand;
 import net.tessa.mcmtforge.config.GeneralConfig;
+import net.tessa.mcmtforge.config.ThreadedRegionsConfig;
 import net.tessa.mcmtforge.jmx.JMXRegistration;
 import net.tessa.mcmtforge.serdes.SerDesRegistry;
 import net.minecraft.world.InteractionResult;
@@ -25,9 +26,6 @@ public class MCMT {
     public static GeneralConfig config;
 
     public MCMT(FMLJavaModLoadingContext context) {
-        // This code runs as soon as Minecraft is in a mod-load-ready state.
-        // However, some things (like resources) may still be uninitialized.
-        // Proceed with mild caution.
         LOGGER.info("Initializing MCMTFabric...");
         ConfigHolder<GeneralConfig> holder = AutoConfig.register(GeneralConfig.class, Toml4jConfigSerializer::new);
         holder.registerLoadListener((manager, data) -> {
@@ -36,6 +34,11 @@ public class MCMT {
         });
         holder.load();  // Load again to run loadTELists() handler
         config = holder.getConfig();
+
+        ConfigHolder<ThreadedRegionsConfig> trHolder = AutoConfig.register(ThreadedRegionsConfig.class, Toml4jConfigSerializer::new);
+        trHolder.load();
+
+        trHolder.getConfig().threadedChunksRegions.forEach(ParallelProcessor::addThreadedChunksRegion);
 
         if (System.getProperty("jmt.mcmt.jmx") != null) {
             JMXRegistration.register();

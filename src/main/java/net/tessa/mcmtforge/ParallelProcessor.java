@@ -1,20 +1,25 @@
 package net.tessa.mcmtforge;
 
-import net.tessa.mcmtforge.config.BlockEntityLists;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.animal.allay.Allay;
+import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.entity.*;
 import net.tessa.mcmtforge.config.GeneralConfig;
-import net.tessa.mcmtforge.serdes.SerDesHookTypes;
-import net.tessa.mcmtforge.serdes.SerDesRegistry;
-import net.tessa.mcmtforge.serdes.filter.ISerDesFilter;
+import net.tessa.mcmtforge.debug.WorldTickStats;
 import net.tessa.mcmtforge.serdes.pools.PostExecutePool;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.FallingBlockEntity;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.TickingBlockEntity;
 import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.tessa.mcmtforge.parallelised.BotRegionManager;
+import net.tessa.mcmtforge.parallelised.threads.GlobalAffinityThreadPool;
+import net.tessa.mcmtforge.parallelised.threads.ThreadedChunksRegion;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -31,43 +36,109 @@ public class ParallelProcessor {
 
     static Phaser worldPhaser;
 
-    static ConcurrentHashMap<ServerLevel, Phaser> sharedPhasers = new ConcurrentHashMap<>();
     static ExecutorService worldPool;
-    static ExecutorService tickPool;
     static MinecraftServer mcs;
     static AtomicBoolean isTicking = new AtomicBoolean();
 
-    public static void setupThreadPool(int parallelism) {
-        AtomicInteger worldPoolThreadID = new AtomicInteger();
-        AtomicInteger tickPoolThreadID = new AtomicInteger();
-        final ClassLoader cl = MCMT.class.getClassLoader();
-        ForkJoinPool.ForkJoinWorkerThreadFactory worldThreadFactory = p -> {
-            ForkJoinWorkerThread fjwt = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(p);
-            fjwt.setName("MCMT-World-Pool-Thread-" + worldPoolThreadID.getAndIncrement());
-            regThread("MCMT-World", fjwt);
-            fjwt.setContextClassLoader(cl);
-            return fjwt;
-        };
-        ForkJoinPool.ForkJoinWorkerThreadFactory tickThreadFactory = p -> {
-            ForkJoinWorkerThread fjwt = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(p);
-            fjwt.setName("MCMT-Tick-Pool-Thread-" + tickPoolThreadID.getAndIncrement());
-            regThread("MCMT-Tick", fjwt);
-            fjwt.setContextClassLoader(cl);
-            return fjwt;
-        };
-        worldPool = new ForkJoinPool(Math.min(3, Math.max(parallelism / 2, 1)), worldThreadFactory, null, true);
-        tickPool = new ForkJoinPool(parallelism, tickThreadFactory, null, true);
-    }
-
-    /**
-     * Creates and sets up the thread pool
-     */
-    static {
-        // Must be static here due to class loading shenanagins
-        // setupThreadPool(4);
-    }
+    private static final ConcurrentHashMap<ServerLevel, List<Runnable>> delayedChunkTasks = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ServerLevel, List<Runnable>> delayedEntityTasks = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ServerLevel, List<Runnable>> delayedBlockEntityTasks = new ConcurrentHashMap<>();
 
     static Map<String, Set<Thread>> mcThreadTracker = new ConcurrentHashMap<String, Set<Thread>>();
+
+    // List of ThreadedChunksRegion
+    public static final List<ThreadedChunksRegion> threadedChunksRegions = new ArrayList<>();
+
+    private static final Set<ThreadedChunksRegion> pendingRegionsToAdd = ConcurrentHashMap.newKeySet();
+
+    private static final Set<ThreadedChunksRegion> pendingRegionsToRemove = ConcurrentHashMap.newKeySet();
+
+
+    public static final ConcurrentHashMap<ServerLevel, WorldTickStats> worldTickStats = new ConcurrentHashMap<>();
+
+    private static final Cache<ChunkPos, ThreadedChunksRegion> chunkRegionCache = Caffeine.newBuilder()
+            .initialCapacity(10000)
+            .maximumSize(10000)
+            .build();
+
+    public static void resetThreadedChunksRegions() {
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                region.shutdownExecutors();
+            }
+            threadedChunksRegions.clear();
+            chunkRegionCache.invalidateAll(); // Invalidate cache when regions are reset
+        }
+    }
+
+    public static void addThreadedChunksRegion(ThreadedChunksRegion region) {
+        synchronized (pendingRegionsToAdd) {
+            pendingRegionsToAdd.add(region);
+            region.getSingleThreadExecutor(); // Force load executor once to avoid blocking when there is no chunk tick
+        }
+    }
+
+
+    public static void removeThreadedChunksRegion(ThreadedChunksRegion region) {
+        synchronized (threadedChunksRegions) {
+            pendingRegionsToRemove.add(region);
+        }
+    }
+
+    public static void removeThreadedChunksRegionByName(String name) {
+        synchronized (threadedChunksRegions) {
+            ThreadedChunksRegion region = null;
+            for (ThreadedChunksRegion r : threadedChunksRegions) {
+                if (r.getName().equals(name)) {
+                    region = r;
+                    break;
+                }
+            }
+            if (region != null) {
+                removeThreadedChunksRegion(region);
+            }
+        }
+    }
+
+    private static ThreadedChunksRegion findMatchingRegion(int chunkX, int chunkZ, Level world) {
+        ChunkPos pos = new ChunkPos(chunkX, chunkZ);
+        return chunkRegionCache.get(pos, key -> {
+            synchronized (threadedChunksRegions) {
+                String worldId = world.dimension().location().toString();
+
+                // Single stream operation to find the smallest matching region
+                // with preference for non-bot regions
+                return threadedChunksRegions.stream()
+                        .filter(region -> region.contains(worldId, chunkX, chunkZ))
+                        .min((r1, r2) -> {
+                            // First, compare based on bot region prefix
+                            boolean isBot1 = r1.getName().startsWith("bot_region_");
+                            boolean isBot2 = r2.getName().startsWith("bot_region_");
+
+                            if (isBot1 != isBot2) {
+                                // If one is a bot region and the other isn't,
+                                // prefer the non-bot region
+                                return isBot1 ? 1 : -1;
+                            }
+
+                            // If both are bot regions or both are not,
+                            // compare by area as before
+                            long area1 = r1.getArea();
+                            long area2 = r2.getArea();
+                            return Long.compare(area1, area2);
+                        })
+                        .orElse(null);
+            }
+        });
+    }
+
+    public static void setupThreadPool(int parallelism) {
+        GlobalAffinityThreadPool.getAffinitySharedPool();
+
+        worldPool = GlobalAffinityThreadPool.getAffinityWorldAndRegionPool();
+        for (int i = 0; i < 2; i++)
+            GlobalAffinityThreadPool.increaseWorldAndRegionPoolSize();
+    }
 
     // Statistics
     public static AtomicInteger currentWorlds = new AtomicInteger();
@@ -94,7 +165,7 @@ public class ParallelProcessor {
     static GeneralConfig config;
 
     public static void preTick(int size, MinecraftServer server) {
-        config = MCMT.config; // Load when config are loaded. Static loads before config update.
+        config = MCMT.config;
         if (!config.disabled && !config.disableWorld) {
             if (worldPhaser != null) {
                 LOGGER.warn("Multiple servers?");
@@ -104,6 +175,32 @@ public class ParallelProcessor {
                 isTicking.set(true);
                 worldPhaser = new Phaser(size + 1);
                 mcs = server;
+            }
+        }
+        // Process pending regions
+        synchronized (pendingRegionsToAdd) {
+            if (!pendingRegionsToAdd.isEmpty()) {
+                synchronized (threadedChunksRegions) {
+                    for (ThreadedChunksRegion region : pendingRegionsToAdd) {
+                        threadedChunksRegions.add(region);
+                        GlobalAffinityThreadPool.increaseWorldAndRegionPoolSize();
+                    }
+                    chunkRegionCache.invalidateAll();
+                    pendingRegionsToAdd.clear();
+                }
+            }
+        }
+        synchronized (pendingRegionsToRemove) {
+            if (!pendingRegionsToRemove.isEmpty()) {
+                synchronized (pendingRegionsToRemove) {
+                    for (ThreadedChunksRegion region : pendingRegionsToRemove) {
+                        threadedChunksRegions.remove(region);
+                        region.shutdownExecutors();
+                        GlobalAffinityThreadPool.decreaseWorldAndRegionPoolSize();
+                    }
+                    chunkRegionCache.invalidateAll();
+                    pendingRegionsToRemove.clear();
+                }
             }
         }
     }
@@ -142,10 +239,6 @@ public class ParallelProcessor {
         }
     }
 
-    public static long[] lastTickTime = new long[32];
-    public static int lastTickTimePos = 0;
-    public static int lastTickTimeFill = 0;
-
     public static void postTick(MinecraftServer server) {
         if (!config.disabled && !config.disableWorld) {
             if (mcs != server) {
@@ -158,7 +251,7 @@ public class ParallelProcessor {
 
                 isTicking.set(false);
                 worldPhaser = null;
-                //PostExecute logic
+                // PostExecute logic
                 Deque<Runnable> queue = PostExecutePool.POOL.getQueue();
                 Iterator<Runnable> qi = queue.iterator();
                 while (qi.hasNext()) {
@@ -166,163 +259,345 @@ public class ParallelProcessor {
                     r.run();
                     qi.remove();
                 }
-                lastTickTime[lastTickTimePos] = System.nanoTime() - tickStart;
-                lastTickTimePos = (lastTickTimePos + 1) % lastTickTime.length;
-                lastTickTimeFill = Math.min(lastTickTimeFill + 1, lastTickTime.length - 1);
+            }
+        }
+
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                region.swapExecutionTimeBuffers();
+            }
+        }
+
+        synchronized (worldTickStats) {
+            for (WorldTickStats stats : worldTickStats.values()) {
+                stats.swapExecutionTimeBuffers();
             }
         }
     }
 
-    public static void preChunkTick(ServerLevel world) {
-        Phaser phaser; // Keep a party throughout 3 ticking phases
-        if (!config.disabled && !config.disableEnvironment) {
-            phaser = new Phaser(2);
-        } else {
-            phaser = new Phaser(1);
-        }
-        sharedPhasers.put(world, phaser);
-    }
 
-    public static void callTickChunks(ServerLevel world, LevelChunk chunk, int k) {
+    public static void preChunkTick(ServerLevel world) {
         if (config.disabled || config.disableEnvironment) {
-            world.tickChunk(chunk, k);
             return;
         }
-        String taskName = null;
-        if (config.opsTracing) {
-            taskName = "EnvTick: " + chunk.toString() + "@" + chunk.hashCode();
-            currentTasks.add(taskName);
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                if (region.getWorldId().equals(world.dimension().location().toString())) {
+                    // Register the main thread in the region's chunkTickPhaser
+//                    region.getChunkTickPhaser().register();
+                }
+            }
         }
-        String finalTaskName = taskName;
-        sharedPhasers.get(world).register();
-        tickPool.execute(() -> {
+    }
+
+
+    public static void callTickChunks(ServerLevel world, LevelChunk chunk, int k) {
+        int chunkX = chunk.getPos().x;
+        int chunkZ = chunk.getPos().z;
+
+        ThreadedChunksRegion matchingRegion = findMatchingRegion(chunkX, chunkZ, world);
+        if (matchingRegion == null) {
+            // No matching region, delay processing
+            delayedChunkTasks.computeIfAbsent(world, w -> new ArrayList<>())
+                    .add(() -> world.tickChunk(chunk, k));
+            return;
+        }
+
+        Executor executor = matchingRegion.getChunkTickExecutor();
+
+        String taskName;
+        if (config.opsTracing) {
+            taskName = "ChunkTick: " + chunk + "@" + chunk.hashCode();
+            matchingRegion.currentTasks.add(taskName);
+        } else {
+            taskName = "";
+        }
+
+
+        matchingRegion.getChunkTickPhaser().register();
+
+        executor.execute(() -> {
             try {
-                currentEnvs.incrementAndGet();
+                matchingRegion.recordChunkStageStart();
+
+                long startTime = System.nanoTime(); // Start timing
                 world.tickChunk(chunk, k);
+                long endTime = System.nanoTime(); // End timing
+                long duration = endTime - startTime;
+                matchingRegion.addChunkTickTime(duration); // Store execution time
             } finally {
-                if (config.opsTracing) currentTasks.remove(finalTaskName);
-                sharedPhasers.get(world).arriveAndDeregister();
-                currentEnvs.decrementAndGet();
+                matchingRegion.getChunkTickPhaser().arrive();
+                if (config.opsTracing) {
+                    if (matchingRegion.currentTasks.stream().anyMatch(task -> (task.contains("Entity"))))
+                        LOGGER.debug("Mixed tasks detected");
+                    matchingRegion.currentTasks.remove(taskName);
+                }
             }
         });
     }
 
     public static void postChunkTick(ServerLevel world) {
-        if (!config.disabled && !config.disableEnvironment) {
-            var phaser = sharedPhasers.get(world);
-            phaser.arriveAndDeregister();
-            phaser.arriveAndAwaitAdvance();
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                // Region's post-chunk-tick handler
+                if (region.getWorldId().equals(world.dimension().location().toString())) {
+                    GlobalAffinityThreadPool.getAffinitySharedPool().execute(region::postChunkTick);
+                }
+            }
+        }
+
+        // Process delayed chunk tasks
+        List<Runnable> tasks = delayedChunkTasks.remove(world);
+        if (tasks != null) {
+            WorldTickStats stats = worldTickStats.computeIfAbsent(world, w -> new WorldTickStats());
+            for (Runnable task : tasks) {
+                long startTime = System.nanoTime();
+                task.run();
+                long endTime = System.nanoTime();
+                stats.chunkTickTimesCurrent.add(endTime - startTime);
+            }
         }
     }
 
+
     public static void preEntityTick(ServerLevel world) {
-        if (!config.disabled && !config.disableEntity) sharedPhasers.get(world).register();
+        if (config.disabled || config.disableEntity) {
+            return;
+        }
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                if (region.getWorldId().equals(world.dimension().location().toString())) {
+                    // Register the main thread in the region's entityTickPhaser
+//                    region.getEntityTickPhaser().register();
+                }
+            }
+        }
     }
+
 
     public static void callEntityTick(Consumer<Entity> tickConsumer, Entity entityIn, ServerLevel serverworld) {
         if (config.disabled || config.disableEntity) {
             tickConsumer.accept(entityIn);
             return;
         }
-        if (entityIn instanceof Player || entityIn instanceof FallingBlockEntity ) {
+
+        if (shouldTickPortalSynchronously(entityIn)) {
             tickConsumer.accept(entityIn);
             return;
         }
-        String taskName = null;
-        if (config.opsTracing) {
-            taskName = "EntityTick: " + /*entityIn.toString() + KG: Wayyy too slow. Maybe for debug but needs to be done via flag in that circumstance */ "@" + entityIn.hashCode();
-            currentTasks.add(taskName);
+
+        int chunkX = entityIn.chunkPosition().x;
+        int chunkZ = entityIn.chunkPosition().z;
+
+        ThreadedChunksRegion matchingRegion = findMatchingRegion(chunkX, chunkZ, serverworld);
+        if (matchingRegion == null) {
+            // No matching region, delay processing
+            delayedEntityTasks.computeIfAbsent(serverworld, w -> new ArrayList<>())
+                    .add(() -> {
+                        if (entityIn instanceof ServerPlayer player) {
+                            BotRegionManager.checkAndManageBot(player);
+                        }
+                        tickConsumer.accept(entityIn);
+                    });
+            return;
         }
-        String finalTaskName = taskName;
-        sharedPhasers.get(serverworld).register();
-        tickPool.execute(() -> {
+
+        Executor executor = shouldUseSingleThread(entityIn) ?
+                matchingRegion.getSingleThreadExecutor() :
+                matchingRegion.getEntityTickExecutor();
+
+
+        matchingRegion.getEntityTickPhaser().register();
+        executor.execute(() -> {
+            String taskName = null;
             try {
-                final ISerDesFilter filter = SerDesRegistry.getFilter(SerDesHookTypes.EntityTick, entityIn.getClass());
-                currentEnts.incrementAndGet();
-                if (filter != null) {
-                    filter.serialise(() -> tickConsumer.accept(entityIn), entityIn, entityIn.blockPosition(), serverworld, SerDesHookTypes.EntityTick);
+                // Wait for chunk tick stage to complete in this region
+                matchingRegion.getChunkTickPhaser().awaitAdvance(0);
+
+                if (config.opsTracing) {
+                    taskName = "EntityTick: " + entityIn;
+                    matchingRegion.currentTasks.add(taskName);
                 } else {
-                    tickConsumer.accept(entityIn);
+                    taskName = "";
                 }
+
+                matchingRegion.recordEntityStageStart();
+
+                long startTime = System.nanoTime();
+
+                if (entityIn instanceof ServerPlayer player) {
+                    BotRegionManager.checkAndManageBot(player);
+                }
+
+                tickConsumer.accept(entityIn);
+
+                long endTime = System.nanoTime();
+                long duration = endTime - startTime;
+                matchingRegion.addEntityTickTime(duration);
             } finally {
-                if (config.opsTracing) currentTasks.remove(finalTaskName);
-                sharedPhasers.get(serverworld).arriveAndDeregister();
-                currentEnts.decrementAndGet();
+                matchingRegion.getEntityTickPhaser().arrive();
+                if (config.opsTracing) {
+                    if (matchingRegion.currentTasks.stream().anyMatch(task -> (task.startsWith("Chunk") || task.startsWith("Block"))))
+                        LOGGER.debug("Mixed tasks detected");
+                    matchingRegion.currentTasks.remove(taskName);
+                }
             }
         });
     }
 
-    public static void postEntityTick(ServerLevel world) {
-        if (!config.disabled && !config.disableEntity) {
-            var phaser = sharedPhasers.get(world);
-            phaser.arriveAndDeregister();
-            phaser.arriveAndAwaitAdvance();
+
+    private static boolean shouldUseSingleThread(Entity entity) {
+        return entity instanceof FallingBlockEntity ||
+                entity instanceof Allay ||
+                entity instanceof PrimedTnt;
+    }
+
+    private static boolean shouldTickPortalSynchronously(Entity entity) {
+        if (entity.isInsidePortal) {
+            return true;
         }
+        return entity instanceof Projectile;
+    }
+
+    public static void postEntityTick(ServerLevel world) {
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                if (region.getWorldId().equals(world.dimension().location().toString())) {
+                    GlobalAffinityThreadPool.getAffinitySharedPool().execute(region::postEntityTick);
+
+                }
+            }
+        }
+
+        // Process delayed entity tasks
+        List<Runnable> tasks = delayedEntityTasks.remove(world);
+        if (tasks != null) {
+            WorldTickStats stats = worldTickStats.computeIfAbsent(world, w -> new WorldTickStats());
+            for (Runnable task : tasks) {
+                long startTime = System.nanoTime();
+                task.run();
+                long endTime = System.nanoTime();
+                stats.entityTickTimesCurrent.add(endTime - startTime);
+            }
+        }
+
     }
 
     public static void preBlockEntityTick(ServerLevel world) {
-        if (!config.disabled && !config.disableTileEntity) sharedPhasers.get(world).register();
+        if (config.disabled || config.disableBlockEntity) {
+            return;
+        }
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                if (region.getWorldId().equals(world.dimension().location().toString())) {
+//                    region.getBlockEntityTickPhaser().register();
+                }
+            }
+        }
     }
 
     public static void callBlockEntityTick(TickingBlockEntity tte, Level world) {
-        if ((world instanceof ServerLevel) && tte instanceof LevelChunk.RebindableTickingBlockEntityWrapper && (((LevelChunk.RebindableTickingBlockEntityWrapper) tte).ticker instanceof LevelChunk.BoundTickingBlockEntity<?>)) {
-            if (config.disabled || config.disableTileEntity) {
-                tte.tick();
-                return;
-            }
-            if (((LevelChunk.BoundTickingBlockEntity<?>) ((LevelChunk.RebindableTickingBlockEntityWrapper) tte).ticker).blockEntity instanceof PistonMovingBlockEntity) {
-                tte.tick();
-                return;
-            }
+        if (!(world instanceof ServerLevel) || !(tte instanceof LevelChunk.RebindableTickingBlockEntityWrapper wrappedInvoker)) {
+            tte.tick();
+            return;
+        }
+
+        if (!(wrappedInvoker.ticker instanceof LevelChunk.BoundTickingBlockEntity<?>)) {
+            tte.tick();
+            return;
+        }
+
+        if (config.disabled || config.disableBlockEntity) {
+            tte.tick();
+            return;
+        }
+
+        BlockEntity blockEntity = ((LevelChunk.BoundTickingBlockEntity<?>) wrappedInvoker.ticker).blockEntity;
+        int chunkX = blockEntity.getBlockPos().getX() >> 4;
+        int chunkZ = blockEntity.getBlockPos().getZ() >> 4;
+
+        ThreadedChunksRegion matchingRegion = findMatchingRegion(chunkX, chunkZ, world);
+        if (matchingRegion == null) {
+            // No matching region, delay processing
+            delayedBlockEntityTasks.computeIfAbsent((ServerLevel) world, w -> new ArrayList<>())
+                    .add(tte::tick);
+            return;
+        }
+
+        Executor executor = shouldUseSingleThread(blockEntity) ?
+                matchingRegion.getSingleThreadExecutor() :
+                matchingRegion.getBlockEntityTickExecutor();
+
+
+        matchingRegion.getBlockEntityTickPhaser().register();
+        executor.execute(() -> {
             String taskName = null;
-            if (config.opsTracing) {
-                taskName = "TETick: " + tte.toString() + "@" + tte.hashCode();
-                currentTasks.add(taskName);
-            }
-            String finalTaskName = taskName;
-            sharedPhasers.get(world).register();
-            tickPool.execute(() -> {
-                try {
-                    final ISerDesFilter filter = SerDesRegistry.getFilter(SerDesHookTypes.TETick, ((LevelChunk.RebindableTickingBlockEntityWrapper) tte).ticker.getClass());
-                    currentTEs.incrementAndGet();
-                    if (filter != null) filter.serialise(tte::tick, tte, tte.getPos(), world, SerDesHookTypes.TETick);
-                    else tte.tick();
-                } catch (Exception e) {
-                    System.err.println("Exception ticking TE at " + tte.getPos());
-                    e.printStackTrace();
-                } finally {
-                    if (config.opsTracing) currentTasks.remove(finalTaskName);
-                    sharedPhasers.get(world).arriveAndDeregister();
-                    currentTEs.decrementAndGet();
+            try {
+                // Wait for entity tick stage to complete in this region
+                matchingRegion.getEntityTickPhaser().awaitAdvance(0);
+
+                if (config.opsTracing) {
+                    taskName = "BlockEntityTick: " + tte + "@" + tte.hashCode();
+                    matchingRegion.currentTasks.add(taskName);
+                } else {
+                    taskName = "";
                 }
-            });
-        } else tte.tick();
+
+                matchingRegion.recordBlockEntityStageStart();
+
+                long startTime = System.nanoTime();
+                tte.tick();
+                long endTime = System.nanoTime();
+                long duration = endTime - startTime;
+                matchingRegion.addBlockEntityTickTime(duration);
+            } finally {
+                matchingRegion.getBlockEntityTickPhaser().arrive();
+                if (config.opsTracing) {
+                    if (matchingRegion.currentTasks.stream().anyMatch(task -> (task.startsWith("Chunk") || task.startsWith("EntityTick"))))
+                        LOGGER.debug("Mixed tasks detected");
+                    matchingRegion.currentTasks.remove(taskName);
+                }
+            }
+        });
     }
 
-    public static boolean filterTE(TickingBlockEntity tte) {
-        boolean isLocking = false;
-        if (BlockEntityLists.teBlackList.contains(tte.getClass())) {
-            isLocking = true;
-        }
-        // Apparently a string starts with check is faster than Class.getPackage; who knew (I didn't)
-        if (!isLocking && config.chunkLockModded && !tte.getClass().getName().startsWith("net.minecraft.block.entity.")) {
-            isLocking = true;
-        }
-        if (isLocking && BlockEntityLists.teWhiteList.contains(tte.getClass())) {
-            isLocking = false;
-        }
-        if (tte instanceof PistonMovingBlockEntity) {
-            isLocking = true;
-        }
-        return isLocking;
+    private static boolean shouldUseSingleThread(BlockEntity blockEntity) {
+        return blockEntity instanceof PistonMovingBlockEntity ||
+                blockEntity instanceof SculkSensorBlockEntity ||
+                blockEntity instanceof SculkShriekerBlockEntity ||
+                blockEntity instanceof SculkCatalystBlockEntity;
     }
 
     public static void postBlockEntityTick(ServerLevel world) {
-        if (!config.disabled && !config.disableTileEntity) {
-            var phaser = sharedPhasers.get(world);
-            phaser.arriveAndDeregister();
-            phaser.arriveAndAwaitAdvance();
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                if (region.getWorldId().equals(world.dimension().location().toString())) {
+                    GlobalAffinityThreadPool.getAffinitySharedPool().execute(region::postBlockEntityTick);
+                }
+            }
         }
+
+        // Process delayed block entity tasks
+        List<Runnable> tasks = delayedBlockEntityTasks.remove(world);
+        if (tasks != null) {
+            WorldTickStats stats = worldTickStats.computeIfAbsent(world, w -> new WorldTickStats());
+            for (Runnable task : tasks) {
+                long startTime = System.nanoTime();
+                task.run();
+                long endTime = System.nanoTime();
+                stats.blockEntityTickTimesCurrent.add(endTime - startTime);
+            }
+        }
+
+        synchronized (threadedChunksRegions) {
+            for (ThreadedChunksRegion region : threadedChunksRegions) {
+                if (region.getWorldId().equals(world.dimension().location().toString())) {
+                    region.getBlockEntityTickPhaser().awaitAdvance(0);
+                    region.initializePhaser();
+                }
+            }
+        }
+
     }
 
     public static boolean shouldThreadChunks() {

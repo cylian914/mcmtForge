@@ -120,6 +120,7 @@ minecraft {
         }
     }
 }
+
 mixin {
     config "mcmtforge.mixins.json"
     debug.verbose = true
@@ -152,7 +153,8 @@ dependencies {
     minecraft("net.minecraftforge:forge:${minecraft_version}-${forge_version}")
 
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
-
+    minecraftLibrary("com.github.ben-manes.caffeine:caffeine:3.2.2")
+    minecraftLibrary("net.openhft:affinity:3.23.3")
     // Example mod dependency with JEI - using fg.deobf() ensures the dependency is remapped to your development mappings
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly fg.deobf("mezz.jei:jei-${mc_version}-common-api:${jei_version}")
@@ -162,12 +164,16 @@ dependencies {
     // This maps to ./libs/coolmod-${mc_version}-${coolmod_version}.jar
     // The group id is ignored when searching -- in this case, it is "blank"
     // implementation fg.deobf("blank:coolmod-${mc_version}:${coolmod_version}")
-    //minecraftLibrary files("build/libs/mcmtforge-1.0.0.jar")
+    minecraftLibrary files("build/libs/mcmtforge-1.0.0.jar")
     // For more info:
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 
     implementation "me.shedaniel.cloth:cloth-config-forge:11.0.99"
+    compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.0"))
+    implementation(jarJar("io.github.llamalad7:mixinextras-forge:0.5.0")) {
+        jarJar.ranged(it, "[0.5.0,)")
+    }
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
