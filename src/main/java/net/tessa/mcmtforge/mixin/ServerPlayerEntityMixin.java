@@ -1,4 +1,4 @@
-package net.himeki.mcmtfabric.mixin;
+package net.tessa.mcmtforge.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

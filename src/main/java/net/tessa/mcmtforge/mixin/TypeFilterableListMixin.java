@@ -30,10 +30,12 @@ public abstract class TypeFilterableListMixin<T> extends AbstractCollection<T> {
     @Mutable
     private List<T> allInstances;
 
-    @Inject(method = "<init>", at = @At("TAIL"))
+    @Inject(method = "<init>", at = @At(value = "TAIL"))
     private void fix(Class pBaseClass, CallbackInfo ci) {
         byClass = new ConcurrentHashMap<>();
         allInstances = new CopyOnWriteArrayList<>();
+
+        this.byClass.put(pBaseClass, this.allInstances);
     }
 
     @ModifyArg(remap = false, method = "m_13537_", at = @At(value = "INVOKE", target = "Ljava/util/stream/Stream;collect(Ljava/util/stream/Collector;)Ljava/lang/Object;"))

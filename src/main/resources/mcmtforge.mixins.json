@@ -8,9 +8,6 @@
     "ChunkHolderMixin",
     "ChunkMixin",
     "ChunkTicketManagerMixin",
-    "dMixin",
-    "EntityIndexMixin",
-    "EntityListMixin",
     "DedicatedServerWatchdogMixin",
     "EntityIndexMixin",
     "EntityListMixin",
@@ -33,13 +30,16 @@
     "SectionedEntityCacheMixin",
     "SerializingRegionBasedStorageMixin",
     "ServerChunkManagerMixin",
+    "ServerPlayerEntityMixin",
     "ServerWorldMixin",
     "SimulationDistanceLevelPropagatorMixin",
     "SyncAllMixin",
+    "ThreadedAnvilChunkStorageMixin",
     "TypeFilterableListMixin",
     "UtilMixin",
     "WorldChunkMixin",
-    "WorldMixin"
+    "WorldMixin",
+    "WorldTickSchedulerMixin"
   ],
   "client": [
   ],

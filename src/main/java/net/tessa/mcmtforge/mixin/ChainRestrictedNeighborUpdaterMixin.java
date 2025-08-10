@@ -34,11 +34,6 @@ public abstract class ChainRestrictedNeighborUpdaterMixin implements NeighborUpd
          addedThisLayer = new CopyOnWriteArrayList<>();
      }
 
-     @Inject(method = "runUpdates", at = @At(value = "INVOKE", target = "Ljava/util/List;clear()V", ordinal = 0))
-    private void log(CallbackInfo ci) {
-//         MCMT.LOGGER.warn("stack size: {}", stack.size());
-     }
-
     @WrapMethod(method = "addAndRun")
     private synchronized void syncEnqueue(BlockPos pPos, CollectingNeighborUpdater.NeighborUpdates pUpdates, Operation<Void> original) {
         original.call(pPos, pUpdates);

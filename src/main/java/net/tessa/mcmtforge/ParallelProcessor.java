@@ -1,5 +1,7 @@
 package net.tessa.mcmtforge;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.animal.allay.Allay;
 import net.minecraft.world.entity.item.PrimedTnt;
@@ -245,9 +247,7 @@ public class ParallelProcessor {
                 LOGGER.warn("Multiple servers?");
                 return;
             } else {
-               // MCMT.LOGGER.warn("TICKED WP {}", worldPhaser.toString());
                 worldPhaser.arriveAndAwaitAdvance();
-                //MCMT.LOGGER.warn("ETICKED WP");
 
                 isTicking.set(false);
                 worldPhaser = null;

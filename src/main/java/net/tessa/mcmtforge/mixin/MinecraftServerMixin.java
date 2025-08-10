@@ -23,8 +23,6 @@ import java.util.function.BooleanSupplier;
 
 @Mixin(MinecraftServer.class)
 public abstract class MinecraftServerMixin extends ReentrantBlockableEventLoop<TickTask> implements CommandSource, AutoCloseable {
-    @Shadow
-    public abstract ServerLevel overworld();
 
     @Shadow
     @Final
@@ -34,7 +32,7 @@ public abstract class MinecraftServerMixin extends ReentrantBlockableEventLoop<T
         super(string);
     }
 
-    @Inject(method = "tickChildren", at = @At(remap = false, value = "INVOKE", target = "Lnet/minecraft/server/MinecraftServer;getWorldArray()[Lnet/minecraft/server/level/ServerLevel;"))
+    @Inject(method = "tickChildren(Ljava/util/function/BooleanSupplier;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/MinecraftServer;getWorldArray()[Lnet/minecraft/server/level/ServerLevel;"))
     private void preTick(BooleanSupplier shouldKeepTicking, CallbackInfo ci) {
         ParallelProcessor.preTick(this.levels.size(), (MinecraftServer) (Object) this);
     }
@@ -58,7 +56,7 @@ public abstract class MinecraftServerMixin extends ReentrantBlockableEventLoop<T
     private int initialChunkCountBypass(ServerChunkCache instance) {
         if (DebugHookTerminator.isBypassLoadTarget())
             return 441;
-        int loaded = this.overworld().getChunkSource().getLoadedChunksCount();
+        int loaded = this.levels.get(Level.OVERWORLD).getChunkSource().getLoadedChunksCount();
         return Math.min(loaded, 441); // Maybe because multi loading caused overflow
     }
 }
